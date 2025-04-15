@@ -3,8 +3,20 @@ package gostream
 import (
 	"iter"
 
-	"github.com/lvjp/go-streams/v2/function"
+	"github.com/lvjp/go-streams/function"
 )
+
+func Concat[T any](sources ...iter.Seq[T]) iter.Seq[T] {
+	return func(yield func(T) bool) {
+		for _, source := range sources {
+			for t := range source {
+				if !yield(t) {
+					break
+				}
+			}
+		}
+	}
+}
 
 func Count[T any](source iter.Seq[T]) uint64 {
 	var count uint64
@@ -157,6 +169,34 @@ func Limit[T any](source iter.Seq[T], maxSize uint64) iter.Seq[T] {
 				break
 			}
 			count++
+		}
+	}
+}
+
+func TakeWhile[T any](source iter.Seq[T], predicate function.Predicate[T]) iter.Seq[T] {
+	return func(yield func(T) bool) {
+		for t := range source {
+			if !predicate(t) || !yield(t) {
+				break
+			}
+		}
+	}
+}
+
+func DropWhile[T any](source iter.Seq[T], predicate function.Predicate[T]) iter.Seq[T] {
+	return func(yield func(T) bool) {
+		drop := true
+		for t := range source {
+			if drop {
+				if predicate(t) {
+					continue
+				}
+				drop = false
+			}
+
+			if !yield(t) {
+				break
+			}
 		}
 	}
 }
