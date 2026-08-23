@@ -2,50 +2,78 @@ package gostream
 
 import (
 	"iter"
+	"slices"
 
 	"github.com/lvjp/go-streams/function"
 )
 
-func Concat[T any](sources ...iter.Seq[T]) iter.Seq[T] {
-	return func(yield func(T) bool) {
-		for _, source := range sources {
-			for t := range source {
-				if !yield(t) {
-					break
-				}
-			}
-		}
+func Of[T any](v iter.Seq[T]) *Stream[T] {
+	return &Stream[T]{
+		seq: v,
 	}
 }
 
-func Count[T any](source iter.Seq[T]) uint64 {
+func OfSlice[S ~[]E, E any](v S) *Stream[E] {
+	return Of(slices.Values(v))
+}
+
+type Stream[T any] struct {
+	seq iter.Seq[T]
+}
+
+func (s *Stream[T]) Iter() iter.Seq[T] {
+	return s.seq
+}
+
+func (s *Stream[T]) Collect() []T {
+	return slices.Collect(s.seq)
+}
+
+func (s *Stream[T]) Concat(v *Stream[T]) *Stream[T] {
+	return &Stream[T]{
+		seq: func(yield func(T) bool) {
+			for _, it := range []iter.Seq[T]{s.seq, v.Iter()} {
+				for v := range it {
+					if !yield(v) {
+						return
+					}
+				}
+			}
+		},
+	}
+}
+
+func (s *Stream[T]) Count() uint64 {
 	var count uint64
-	for range source {
+
+	for range s.seq {
 		count++
 		if count == 0 {
 			panic("count overflow")
 		}
 	}
+
 	return count
 }
 
-func ForEach[T any](source iter.Seq[T], consumer function.Consumer[T]) {
-	for v := range source {
+func (s *Stream[T]) ForEach(consumer function.Consumer[T]) {
+	for v := range s.seq {
 		consumer(v)
 	}
 }
 
-func AllMatch[T any](source iter.Seq[T], predicate function.Predicate[T]) bool {
-	for v := range source {
+func (s *Stream[T]) AllMatch(predicate function.Predicate[T]) bool {
+	for v := range s.seq {
 		if !predicate(v) {
 			return false
 		}
 	}
+
 	return true
 }
 
-func AnyMatch[T any](source iter.Seq[T], predicate function.Predicate[T]) bool {
-	for v := range source {
+func (s *Stream[T]) AnyMatch(predicate function.Predicate[T]) bool {
+	for v := range s.seq {
 		if predicate(v) {
 			return true
 		}
@@ -53,8 +81,8 @@ func AnyMatch[T any](source iter.Seq[T], predicate function.Predicate[T]) bool {
 	return false
 }
 
-func NoneMatch[T any](source iter.Seq[T], predicate function.Predicate[T]) bool {
-	for v := range source {
+func (s *Stream[T]) NoneMatch(predicate function.Predicate[T]) bool {
+	for v := range s.seq {
 		if predicate(v) {
 			return false
 		}
@@ -62,12 +90,12 @@ func NoneMatch[T any](source iter.Seq[T], predicate function.Predicate[T]) bool 
 	return true
 }
 
-func FindAny[T any](source iter.Seq[T]) (T, bool) {
-	return FindFirst(source)
+func (s *Stream[T]) FindAny() (T, bool) {
+	return s.FindFirst()
 }
 
-func FindFirst[T any](source iter.Seq[T]) (T, bool) {
-	for v := range source {
+func (s *Stream[T]) FindFirst() (T, bool) {
+	for v := range s.seq {
 		return v, true
 	}
 
@@ -75,10 +103,10 @@ func FindFirst[T any](source iter.Seq[T]) (T, bool) {
 	return zeroValue, false
 }
 
-func Max[T any](source iter.Seq[T], comparator function.Comparator[T]) (T, bool) {
+func (s *Stream[T]) Max(comparator function.Comparator[T]) (T, bool) {
 	var maxValue T
 	var found bool
-	for v := range source {
+	for v := range s.seq {
 		if !found || comparator(v, maxValue) > 0 {
 			maxValue = v
 			found = true
@@ -87,10 +115,10 @@ func Max[T any](source iter.Seq[T], comparator function.Comparator[T]) (T, bool)
 	return maxValue, found
 }
 
-func Min[T any](source iter.Seq[T], comparator function.Comparator[T]) (T, bool) {
+func (s *Stream[T]) Min(comparator function.Comparator[T]) (T, bool) {
 	var minValue T
 	var found bool
-	for v := range source {
+	for v := range s.seq {
 		if !found || comparator(v, minValue) < 0 {
 			minValue = v
 			found = true
@@ -99,10 +127,10 @@ func Min[T any](source iter.Seq[T], comparator function.Comparator[T]) (T, bool)
 	return minValue, found
 }
 
-func Reduce[T any](source iter.Seq[T], accumulator function.BinaryOperator[T]) (T, bool) {
+func (s *Stream[T]) Reduce(accumulator function.BinaryOperator[T]) (T, bool) {
 	var result T
 	var found bool
-	for v := range source {
+	for v := range s.seq {
 		if !found {
 			result = v
 			found = true
@@ -113,116 +141,130 @@ func Reduce[T any](source iter.Seq[T], accumulator function.BinaryOperator[T]) (
 	return result, found
 }
 
-func ReduceWithIdentity[T any](
-	source iter.Seq[T],
+func (s *Stream[T]) ReduceWithIdentity(
 	identity T,
 	accumulator function.BinaryOperator[T],
 ) T {
 	result := identity
-	for v := range source {
+	for v := range s.seq {
 		result = accumulator(result, v)
 	}
 	return result
 }
 
-func Map[T, U any](source iter.Seq[T], mapper function.Function[T, U]) iter.Seq[U] {
-	return func(yield func(U) bool) {
-		for t := range source {
-			if !yield(mapper(t)) {
-				break
-			}
-		}
-	}
-}
-
-func FlatMap[T, U any](source iter.Seq[T], mapper function.Function[T, iter.Seq[U]]) iter.Seq[U] {
-	return func(yield func(U) bool) {
-		for t := range source {
-			seqU := mapper(t)
-			for u := range seqU {
-				if !yield(u) {
+func (s *Stream[T]) Map[U any](mapper function.Function[T, U]) *Stream[U] {
+	return &Stream[U]{
+		seq: func(yield func(U) bool) {
+			for t := range s.seq {
+				if !yield(mapper(t)) {
 					break
 				}
 			}
-		}
+		},
 	}
 }
 
-func Filter[T any](source iter.Seq[T], predicate function.Predicate[T]) iter.Seq[T] {
-	return func(yield func(T) bool) {
-		for t := range source {
-			if predicate(t) && !yield(t) {
-				break
+func (s *Stream[T]) FlatMap[U any](mapper function.Function[T, *Stream[U]]) *Stream[U] {
+	return &Stream[U]{
+		func(yield func(U) bool) {
+			for t := range s.seq {
+				for u := range mapper(t).Iter() {
+					if !yield(u) {
+						break
+					}
+				}
 			}
-		}
+		},
 	}
 }
 
-func Limit[T any](source iter.Seq[T], maxSize uint64) iter.Seq[T] {
-	return func(yield func(T) bool) {
-		var count uint64
-		for t := range source {
-			if count >= maxSize {
-				break
+func (s *Stream[T]) Filter(predicate function.Predicate[T]) *Stream[T] {
+	return &Stream[T]{
+		seq: func(yield func(T) bool) {
+			for t := range s.seq {
+				if predicate(t) && !yield(t) {
+					break
+				}
 			}
-			if !yield(t) {
-				break
-			}
-			count++
-		}
+		},
 	}
 }
 
-func TakeWhile[T any](source iter.Seq[T], predicate function.Predicate[T]) iter.Seq[T] {
-	return func(yield func(T) bool) {
-		for t := range source {
-			if !predicate(t) || !yield(t) {
-				break
+func (s *Stream[T]) Limit(maxSize uint64) *Stream[T] {
+	return &Stream[T]{
+		seq: func(yield func(T) bool) {
+			var count uint64
+			for t := range s.seq {
+				if count >= maxSize {
+					break
+				}
+				if !yield(t) {
+					break
+				}
+				count++
 			}
-		}
+		},
 	}
 }
 
-func DropWhile[T any](source iter.Seq[T], predicate function.Predicate[T]) iter.Seq[T] {
-	return func(yield func(T) bool) {
-		drop := true
-		for t := range source {
-			if drop {
-				if predicate(t) {
+func (s *Stream[T]) TakeWhile(predicate function.Predicate[T]) *Stream[T] {
+	return &Stream[T]{
+		seq: func(yield func(T) bool) {
+			for t := range s.seq {
+				if !predicate(t) || !yield(t) {
+					break
+				}
+			}
+		},
+	}
+}
+
+func (s *Stream[T]) DropWhile(predicate function.Predicate[T]) *Stream[T] {
+	return &Stream[T]{
+		seq: func(yield func(T) bool) {
+			drop := true
+			for t := range s.seq {
+				if drop {
+					if predicate(t) {
+						continue
+					}
+					drop = false
+				}
+
+				if !yield(t) {
+					break
+				}
+			}
+		},
+	}
+}
+
+func (s *Stream[T]) Peek(consumer function.Consumer[T]) *Stream[T] {
+	return &Stream[T]{
+		seq: func(yield func(T) bool) {
+			for t := range s.seq {
+				consumer(t)
+				if !yield(t) {
+					break
+				}
+			}
+		},
+	}
+}
+
+func (s *Stream[T]) Skip(n uint64) *Stream[T] {
+	return &Stream[T]{
+		seq: func(yield func(T) bool) {
+			var count uint64
+			for t := range s.seq {
+				if count < n {
+					count++
 					continue
 				}
-				drop = false
+				if !yield(t) {
+					break
+				}
 			}
-
-			if !yield(t) {
-				break
-			}
-		}
-	}
-}
-
-func Peek[T any](source iter.Seq[T], consumer function.Consumer[T]) iter.Seq[T] {
-	return func(yield func(T) bool) {
-		for t := range source {
-			consumer(t)
-			if !yield(t) {
-				break
-			}
-		}
-	}
-}
-
-func Skip[T any](source iter.Seq[T], n uint64) iter.Seq[T] {
-	return func(yield func(T) bool) {
-		var count uint64
-		for t := range source {
-			if count < n {
-				count++
-				continue
-			}
-			if !yield(t) {
-				break
-			}
-		}
+		},
 	}
 }
