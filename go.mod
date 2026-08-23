@@ -1,6 +1,6 @@
 module github.com/lvjp/go-streams
 
-go 1.23.0
+go 1.27.0
 
 require github.com/stretchr/testify v1.10.0
 
